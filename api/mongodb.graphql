@@ -1,0 +1,26 @@
+type Query {
+  exercises(
+    name: String
+    muscle: String
+  ): [Exercise]
+    @rest(
+      endpoint: "http://localhost:3000/api/exercises${{ if (name || muscle) { '?' + (name ? 'name=' + name : '') + (muscle ? (name ? '&' : '?') + 'muscle=' + muscle : '') } }}"
+      method: GET
+    )
+  
+  exercisesFromMongo: [Exercise]
+    @mongodb(
+      url: $MONGODB_URI
+      db: "gym_tracker"
+      collection: "exercises"
+    )
+}
+
+type Exercise {
+  _id: ID
+  name: String!
+  muscle: String!
+  equipments: [String!]!
+  difficulty: String!
+  instructions: String!
+}

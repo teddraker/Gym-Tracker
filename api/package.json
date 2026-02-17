@@ -1,0 +1,16 @@
+{
+  "name": "workout-api",
+  "version": "1.0.0",
+  "description": "Gym Tracker API Server",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "cors": "^2.8.6",
+    "dotenv": "^16.6.1",
+    "express": "^5.2.1",
+    "groq-sdk": "^0.37.0",
+    "mongodb": "^7.1.0"
+  }
+}
