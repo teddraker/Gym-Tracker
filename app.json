@@ -28,6 +28,12 @@
     "scheme": "gymtracker",
     "plugins": [
       "expo-router"
-    ]
+    ],
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "646927da-18e4-47ce-8963-459827e35883"
+      }
+    }
   }
 }
