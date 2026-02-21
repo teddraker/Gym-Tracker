@@ -134,4 +134,89 @@ router.put('/dayRoutines/:userId/:day/order', async (req, res) => {
   }
 });
 
+// ⚡ NEW: Batch update exercise days (replaces 7-14 sequential requests with 1 request)
+router.post('/dayRoutines/:userId/batch-update', async (req, res) => {
+  try {
+    const db = await connectDB();
+    const { userId } = req.params;
+    const { exerciseName, selectedDays, exercise } = req.body;
+
+    if (!exerciseName || !Array.isArray(selectedDays) || !exercise) {
+      return res.status(400).json({ 
+        error: 'exerciseName, selectedDays array, and exercise object are required' 
+      });
+    }
+
+    const allDays = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'];
+    const operations = [];
+
+    // Fetch all routines for the user in one query
+    const routines = await db.collection('dayRoutines')
+      .find({ userId })
+      .toArray();
+
+    // Build a map for quick lookup
+    const routineMap = new Map(routines.map(r => [r.day, r]));
+
+    // Build bulk operations
+    for (const day of allDays) {
+      const shouldHaveExercise = selectedDays.includes(day);
+      const currentRoutine = routineMap.get(day);
+      const hasExercise = currentRoutine?.exercises?.some(
+        e => e.name.toLowerCase() === exerciseName.toLowerCase()
+      );
+
+      if (shouldHaveExercise && !hasExercise) {
+        // Add exercise to this day
+        operations.push({
+          updateOne: {
+            filter: { userId, day },
+            update: {
+              $push: { exercises: exercise },
+              $setOnInsert: { createdAt: new Date() },
+              $set: { updatedAt: new Date() }
+            },
+            upsert: true
+          }
+        });
+      } else if (!shouldHaveExercise && hasExercise) {
+        // Remove exercise from this day
+        operations.push({
+          updateOne: {
+            filter: { userId, day },
+            update: {
+              $pull: { exercises: { name: exerciseName } },
+              $set: { updatedAt: new Date() }
+            }
+          }
+        });
+      }
+    }
+
+    // Execute all operations in a single batch
+    let result = { modifiedCount: 0, upsertedCount: 0 };
+    if (operations.length > 0) {
+      result = await db.collection('dayRoutines').bulkWrite(operations);
+    }
+
+    // Fetch updated routines
+    const updatedRoutines = await db.collection('dayRoutines')
+      .find({ userId })
+      .toArray();
+
+    res.json({
+      success: true,
+      message: 'Exercise days updated successfully',
+      modifiedCount: result.modifiedCount,
+      upsertedCount: result.upsertedCount,
+      operations: operations.length,
+      routines: updatedRoutines
+    });
+
+  } catch (error) {
+    console.error('Error batch updating exercise days:', error);
+    res.status(500).json({ error: 'Failed to batch update exercise days' });
+  }
+});
+
 module.exports = router;

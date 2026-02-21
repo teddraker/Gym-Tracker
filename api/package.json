@@ -4,7 +4,9 @@
   "description": "Gym Tracker API Server",
   "main": "server.js",
   "scripts": {
-    "start": "node server.js"
+    "start": "node server.js",
+    "setup-indexes": "node db/setupIndexes.js",
+    "postinstall": "node db/setupIndexes.js"
   },
   "dependencies": {
     "cors": "^2.8.6",

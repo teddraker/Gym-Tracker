@@ -5,6 +5,26 @@ const router = express.Router();
 
 const EXERCISEDB_BASE = 'https://www.exercisedb.dev/api/v1';
 
+// In-memory cache for ExerciseDB API responses
+const exerciseDBCache = new Map();
+const CACHE_TTL = 10 * 60 * 1000; // 10 minutes
+
+function getCached(key) {
+  const cached = exerciseDBCache.get(key);
+  if (cached && Date.now() < cached.expiresAt) {
+    return cached.data;
+  }
+  exerciseDBCache.delete(key);
+  return null;
+}
+
+function setCache(key, data, ttl = CACHE_TTL) {
+  exerciseDBCache.set(key, {
+    data,
+    expiresAt: Date.now() + ttl
+  });
+}
+
 // Helper: Transform ExerciseDB response to our app's format
 function transformExerciseDB(exercise) {
   return {
@@ -41,6 +61,13 @@ function transformCustomExercise(exercise) {
 router.get('/exercises/search/:query', async (req, res) => {
   try {
     const query = req.params.query;
+    const cacheKey = `search:${query}`;
+
+    // Check cache first
+    const cached = getCached(cacheKey);
+    if (cached) {
+      return res.json(cached);
+    }
 
     // ExerciseDB fuzzy search (searches name, muscles, equipment, body parts)
     const exerciseDBPromise = fetch(
@@ -69,6 +96,9 @@ router.get('/exercises/search/:query', async (req, res) => {
     const unique = all.filter((exercise, index, self) =>
       index === self.findIndex(e => e.name.toLowerCase() === exercise.name.toLowerCase())
     );
+
+    // Cache the result
+    setCache(cacheKey, unique);
 
     res.json(unique);
   } catch (error) {

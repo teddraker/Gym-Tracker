@@ -1,10 +1,20 @@
 // src/services/workoutService.js
+import cacheManager, { cachedFetch, invalidateCache } from './cacheManager';
 
 // Reads from EXPO_PUBLIC_API_URL in root .env
 // Local dev: http://192.168.1.36:3000/api
 // Production: https://your-app.onrender.com/api
 const API_BASE_URL = process.env.EXPO_PUBLIC_API_URL || 'http://192.168.1.36:3000/api';
 console.log('API_BASE_URL:', API_BASE_URL);
+
+// Cache TTLs (in milliseconds)
+const CACHE_TTL = {
+  EXERCISES: 10 * 60 * 1000,      // 10 minutes - exercises don't change often
+  CUSTOM_EXERCISES: 2 * 60 * 1000, // 2 minutes - might add new ones
+  DAY_ROUTINES: 1 * 60 * 1000,     // 1 minute - changes more frequently
+  WORKOUT_SETS: 30 * 1000,         // 30 seconds - real-time data
+  PROFILE: 5 * 60 * 1000,          // 5 minutes
+};
 
 // ==================== WORKOUT SETS ====================
 
@@ -22,7 +32,7 @@ export const saveWorkoutSet = async (exerciseName, weight, reps, notes, userId, 
         notes,
         userId,
         day,
-        rpe, // Rate of Perceived Exertion (1-10)
+        rpe,
       }),
     });
 
@@ -30,7 +40,14 @@ export const saveWorkoutSet = async (exerciseName, weight, reps, notes, userId, 
       throw new Error('Failed to save workout set');
     }
 
-    return await response.json();
+    const data = await response.json();
+    
+    // Invalidate related caches
+    invalidateCache(new RegExp(`workoutSets.*${exerciseName}`));
+    invalidateCache(new RegExp(`user.*${userId}.*workoutSets`));
+    invalidateCache(new RegExp(`history.*${exerciseName}`));
+    
+    return data;
   } catch (error) {
     console.error('Error saving workout set:', error);
     throw error;
@@ -39,13 +56,8 @@ export const saveWorkoutSet = async (exerciseName, weight, reps, notes, userId, 
 
 export const getWorkoutSets = async (exerciseName) => {
   try {
-    const response = await fetch(`${API_BASE_URL}/workoutSets/${encodeURIComponent(exerciseName)}`);
-    
-    if (!response.ok) {
-      throw new Error('Failed to fetch workout sets');
-    }
-
-    return await response.json();
+    const url = `${API_BASE_URL}/workoutSets/${encodeURIComponent(exerciseName)}`;
+    return await cachedFetch(url, {}, CACHE_TTL.WORKOUT_SETS);
   } catch (error) {
     console.error('Error fetching workout sets:', error);
     throw error;
@@ -54,13 +66,8 @@ export const getWorkoutSets = async (exerciseName) => {
 
 export const getUserWorkoutSets = async (userId) => {
   try {
-    const response = await fetch(`${API_BASE_URL}/user/${userId}/workoutSets`);
-    
-    if (!response.ok) {
-      throw new Error('Failed to fetch user workout sets');
-    }
-
-    return await response.json();
+    const url = `${API_BASE_URL}/user/${userId}/workoutSets`;
+    return await cachedFetch(url, {}, CACHE_TTL.WORKOUT_SETS);
   } catch (error) {
     console.error('Error fetching user workout sets:', error);
     throw error;
@@ -71,13 +78,8 @@ export const getUserWorkoutSets = async (userId) => {
 
 export const getDayRoutine = async (userId, day) => {
   try {
-    const response = await fetch(`${API_BASE_URL}/dayRoutines/${userId}/${day.toLowerCase()}`);
-    
-    if (!response.ok) {
-      throw new Error('Failed to fetch day routine');
-    }
-
-    return await response.json();
+    const url = `${API_BASE_URL}/dayRoutines/${userId}/${day.toLowerCase()}`;
+    return await cachedFetch(url, {}, CACHE_TTL.DAY_ROUTINES);
   } catch (error) {
     console.error('Error fetching day routine:', error);
     throw error;
@@ -86,13 +88,8 @@ export const getDayRoutine = async (userId, day) => {
 
 export const getAllDayRoutines = async (userId) => {
   try {
-    const response = await fetch(`${API_BASE_URL}/dayRoutines/${userId}`);
-    
-    if (!response.ok) {
-      throw new Error('Failed to fetch day routines');
-    }
-
-    return await response.json();
+    const url = `${API_BASE_URL}/dayRoutines/${userId}`;
+    return await cachedFetch(url, {}, CACHE_TTL.DAY_ROUTINES);
   } catch (error) {
     console.error('Error fetching day routines:', error);
     throw error;
@@ -113,7 +110,12 @@ export const addExerciseToDay = async (userId, day, exercise) => {
       throw new Error('Failed to add exercise to day');
     }
 
-    return await response.json();
+    const data = await response.json();
+    
+    // Invalidate day routine caches
+    invalidateCache(new RegExp(`dayRoutines.*${userId}`));
+    
+    return data;
   } catch (error) {
     console.error('Error adding exercise to day:', error);
     throw error;
@@ -131,7 +133,12 @@ export const removeExerciseFromDay = async (userId, day, exerciseName) => {
       throw new Error('Failed to remove exercise from day');
     }
 
-    return await response.json();
+    const data = await response.json();
+    
+    // Invalidate day routine caches
+    invalidateCache(new RegExp(`dayRoutines.*${userId}`));
+    
+    return data;
   } catch (error) {
     console.error('Error removing exercise from day:', error);
     throw error;
@@ -140,26 +147,29 @@ export const removeExerciseFromDay = async (userId, day, exerciseName) => {
 
 export const updateExerciseDays = async (userId, exerciseName, selectedDays, exercise) => {
   try {
-    const allDays = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'];
-    const results = [];
+    // NEW: Single batch request instead of 7-14 sequential requests
+    const response = await fetch(`${API_BASE_URL}/dayRoutines/${userId}/batch-update`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        exerciseName,
+        selectedDays,
+        exercise,
+      }),
+    });
 
-    for (const day of allDays) {
-      const shouldHaveExercise = selectedDays.includes(day);
-      const currentRoutine = await getDayRoutine(userId, day);
-      const hasExercise = currentRoutine?.exercises?.some(
-        e => e.name.toLowerCase() === exerciseName.toLowerCase()
-      );
-
-      if (shouldHaveExercise && !hasExercise) {
-        await addExerciseToDay(userId, day, exercise);
-        results.push({ day, action: 'added' });
-      } else if (!shouldHaveExercise && hasExercise) {
-        await removeExerciseFromDay(userId, day, exerciseName);
-        results.push({ day, action: 'removed' });
-      }
+    if (!response.ok) {
+      throw new Error('Failed to update exercise days');
     }
 
-    return results;
+    const data = await response.json();
+    
+    // Invalidate all day routine caches for this user
+    invalidateCache(new RegExp(`dayRoutines.*${userId}`));
+    
+    return data;
   } catch (error) {
     console.error('Error updating exercise days:', error);
     throw error;
@@ -191,13 +201,8 @@ export const getExerciseDays = async (userId, exerciseName) => {
 
 export const getCustomExercises = async () => {
   try {
-    const response = await fetch(`${API_BASE_URL}/customExercises`);
-    
-    if (!response.ok) {
-      throw new Error('Failed to fetch custom exercises');
-    }
-
-    return await response.json();
+    const url = `${API_BASE_URL}/customExercises`;
+    return await cachedFetch(url, {}, CACHE_TTL.CUSTOM_EXERCISES);
   } catch (error) {
     console.error('Error fetching custom exercises:', error);
     throw error;
@@ -219,7 +224,13 @@ export const createCustomExercise = async (exercise) => {
       throw new Error(errorData.error || 'Failed to create custom exercise');
     }
 
-    return await response.json();
+    const data = await response.json();
+    
+    // Invalidate custom exercise caches
+    invalidateCache(new RegExp('customExercises'));
+    invalidateCache(new RegExp('exercises')); // Also clear general exercise caches
+    
+    return data;
   } catch (error) {
     console.error('Error creating custom exercise:', error);
     throw error;
@@ -242,7 +253,12 @@ export const updateExerciseOrder = async (userId, day, exercises) => {
       throw new Error('Failed to update exercise order');
     }
 
-    return await response.json();
+    const data = await response.json();
+    
+    // Invalidate day routine caches
+    invalidateCache(new RegExp(`dayRoutines.*${userId}`));
+    
+    return data;
   } catch (error) {
     console.error('Error updating exercise order:', error);
     throw error;
@@ -259,7 +275,13 @@ export const deleteCustomExercise = async (exerciseId) => {
       throw new Error('Failed to delete custom exercise');
     }
 
-    return await response.json();
+    const data = await response.json();
+    
+    // Invalidate custom exercise caches
+    invalidateCache(new RegExp('customExercises'));
+    invalidateCache(new RegExp('exercises'));
+    
+    return data;
   } catch (error) {
     console.error('Error deleting custom exercise:', error);
     throw error;
@@ -270,15 +292,8 @@ export const deleteCustomExercise = async (exerciseId) => {
 
 export const getExerciseHistory = async (exerciseName, userId = 'default_user', limit = 10) => {
   try {
-    const response = await fetch(
-      `${API_BASE_URL}/history/${encodeURIComponent(exerciseName)}?userId=${userId}&limit=${limit}`
-    );
-
-    if (!response.ok) {
-      throw new Error('Failed to fetch exercise history');
-    }
-
-    return await response.json();
+    const url = `${API_BASE_URL}/history/${encodeURIComponent(exerciseName)}?userId=${userId}&limit=${limit}`;
+    return await cachedFetch(url, {}, CACHE_TTL.WORKOUT_SETS);
   } catch (error) {
     console.error('Error fetching exercise history:', error);
     throw error;
@@ -287,15 +302,8 @@ export const getExerciseHistory = async (exerciseName, userId = 'default_user', 
 
 export const getWorkoutConsistency = async (userId = 'default_user', days = 90) => {
   try {
-    const response = await fetch(
-      `${API_BASE_URL}/user/${userId}/consistency?days=${days}`
-    );
-
-    if (!response.ok) {
-      throw new Error('Failed to fetch workout consistency');
-    }
-
-    return await response.json();
+    const url = `${API_BASE_URL}/user/${userId}/consistency?days=${days}`;
+    return await cachedFetch(url, {}, CACHE_TTL.WORKOUT_SETS);
   } catch (error) {
     console.error('Error fetching workout consistency:', error);
     throw error;
@@ -304,13 +312,8 @@ export const getWorkoutConsistency = async (userId = 'default_user', days = 90) 
 
 export const getMuscleSplit = async (userId, days = 30) => {
   try {
-    const response = await fetch(`${API_BASE_URL}/user/${userId}/muscle-split?days=${days}`);
-    
-    if (!response.ok) {
-      throw new Error('Failed to fetch muscle split');
-    }
-
-    return await response.json();
+    const url = `${API_BASE_URL}/user/${userId}/muscle-split?days=${days}`;
+    return await cachedFetch(url, {}, CACHE_TTL.WORKOUT_SETS);
   } catch (error) {
     console.error('Error fetching muscle split:', error);
     throw error;
@@ -320,13 +323,8 @@ export const getMuscleSplit = async (userId, days = 30) => {
 // Profile and Body Composition APIs
 export const getUserProfile = async (userId) => {
   try {
-    const response = await fetch(`${API_BASE_URL}/profile/${userId}`);
-    
-    if (!response.ok) {
-      throw new Error('Failed to fetch profile');
-    }
-
-    return await response.json();
+    const url = `${API_BASE_URL}/profile/${userId}`;
+    return await cachedFetch(url, {}, CACHE_TTL.PROFILE);
   } catch (error) {
     console.error('Error fetching profile:', error);
     throw error;
@@ -347,7 +345,12 @@ export const saveUserProfile = async (profileData) => {
       throw new Error('Failed to save profile');
     }
 
-    return await response.json();
+    const data = await response.json();
+    
+    // Invalidate profile caches
+    invalidateCache(new RegExp(`profile.*${profileData.userId}`));
+    
+    return data;
   } catch (error) {
     console.error('Error saving profile:', error);
     throw error;
@@ -356,13 +359,8 @@ export const saveUserProfile = async (profileData) => {
 
 export const getBodyCompositionHistory = async (userId, limit = 50) => {
   try {
-    const response = await fetch(`${API_BASE_URL}/profile/${userId}/history?limit=${limit}`);
-    
-    if (!response.ok) {
-      throw new Error('Failed to fetch body composition history');
-    }
-
-    return await response.json();
+    const url = `${API_BASE_URL}/profile/${userId}/history?limit=${limit}`;
+    return await cachedFetch(url, {}, CACHE_TTL.PROFILE);
   } catch (error) {
     console.error('Error fetching body composition history:', error);
     throw error;
@@ -383,7 +381,12 @@ export const addBodyCompositionRecord = async (recordData) => {
       throw new Error('Failed to add body composition record');
     }
 
-    return await response.json();
+    const data = await response.json();
+    
+    // Invalidate history caches
+    invalidateCache(new RegExp(`profile.*${recordData.userId}.*history`));
+    
+    return data;
   } catch (error) {
     console.error('Error adding body composition record:', error);
     throw error;
@@ -394,13 +397,9 @@ export const addBodyCompositionRecord = async (recordData) => {
 
 export const searchExercises = async (query) => {
   try {
-    const response = await fetch(`${API_BASE_URL}/exercises/search/${encodeURIComponent(query)}`);
-    
-    if (!response.ok) {
-      throw new Error('Failed to search exercises');
-    }
-
-    return await response.json();
+    const url = `${API_BASE_URL}/exercises/search/${encodeURIComponent(query)}`;
+    // Short cache for search results
+    return await cachedFetch(url, {}, CACHE_TTL.EXERCISES);
   } catch (error) {
     console.error('Error searching exercises:', error);
     throw error;
@@ -409,13 +408,8 @@ export const searchExercises = async (query) => {
 
 export const getAllExercises = async () => {
   try {
-    const response = await fetch(`${API_BASE_URL}/exercises/all`);
-    
-    if (!response.ok) {
-      throw new Error('Failed to fetch all exercises');
-    }
-
-    return await response.json();
+    const url = `${API_BASE_URL}/exercises/all`;
+    return await cachedFetch(url, {}, CACHE_TTL.EXERCISES);
   } catch (error) {
     console.error('Error fetching all exercises:', error);
     throw error;
@@ -424,13 +418,8 @@ export const getAllExercises = async () => {
 
 export const getExerciseDetail = async (name) => {
   try {
-    const response = await fetch(`${API_BASE_URL}/exercises/${encodeURIComponent(name)}`);
-    
-    if (!response.ok) {
-      throw new Error('Failed to fetch exercise detail');
-    }
-
-    const exercise = await response.json();
+    const url = `${API_BASE_URL}/exercises/${encodeURIComponent(name)}`;
+    const exercise = await cachedFetch(url, {}, CACHE_TTL.EXERCISES);
     // Wrap in same shape as GraphQL response for compatibility
     return { exercises: [exercise] };
   } catch (error) {

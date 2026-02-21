@@ -92,12 +92,13 @@ router.get('/history/:exerciseName', async (req, res) => {
     const decodedName = decodeURIComponent(exerciseName);
     console.log('Searching for exercise:', decodedName, 'userId:', userId);
     
-    // Use case-insensitive regex search
+    // Optimized: Use index-friendly exact match with collation for case-insensitivity
     const sets = await db.collection('workoutSets')
       .find({ 
-        exerciseName: { $regex: new RegExp(`^${decodedName}$`, 'i') },
+        exerciseName: decodedName,
         userId 
       })
+      .collation({ locale: 'en', strength: 2 }) // Case-insensitive comparison
       .sort({ createdAt: -1 })
       .limit(limit * 10) // Get more sets to group by session
       .toArray();
