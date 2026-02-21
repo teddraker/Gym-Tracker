@@ -70,6 +70,9 @@ app.get('/api/stats', async (req, res) => {
 
 
 app.post('/api/setup-database-indexes', async (req, res) => {
+  if(process.env.SETUP_COMPLETED === 'true') {
+    return res.status(410).json({error : 'Setup already completed'});
+  }
   try {
     // Security: Check for a secret key
     const secret = req.headers['x-setup-secret'];
