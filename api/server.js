@@ -68,6 +68,117 @@ app.get('/api/stats', async (req, res) => {
   }
 });
 
+
+app.post('/api/setup-database-indexes', async (req, res) => {
+  try {
+    // Security: Check for a secret key
+    const secret = req.headers['x-setup-secret'];
+    if (secret !== process.env.SETUP_SECRET) {
+      return res.status(403).json({ 
+        error: 'Forbidden: Invalid setup secret' 
+      });
+    }
+
+    const { connectDB } = require('./db/mongodb');
+    const db = await connectDB();
+    
+    console.log('🔧 Starting database index setup...');
+    
+    // WORKOUT SETS INDEXES
+    await db.collection('workoutSets').createIndex(
+      { userId: 1, exerciseName: 1, createdAt: -1 },
+      { name: 'userId_exerciseName_createdAt' }
+    );
+    console.log('✓ workoutSets: userId_exerciseName_createdAt');
+    
+    await db.collection('workoutSets').createIndex(
+      { userId: 1, createdAt: -1 },
+      { name: 'userId_createdAt' }
+    );
+    console.log('✓ workoutSets: userId_createdAt');
+    
+    await db.collection('workoutSets').createIndex(
+      { exerciseName: 1, userId: 1, createdAt: -1 },
+      { name: 'exerciseName_userId_createdAt' }
+    );
+    console.log('✓ workoutSets: exerciseName_userId_createdAt');
+    
+    await db.collection('workoutSets').createIndex(
+      { userId: 1, createdAt: 1 },
+      { name: 'userId_createdAt_asc' }
+    );
+    console.log('✓ workoutSets: userId_createdAt_asc');
+
+    // DAY ROUTINES INDEXES
+    await db.collection('dayRoutines').createIndex(
+      { userId: 1, day: 1 },
+      { name: 'userId_day', unique: true }
+    );
+    console.log('✓ dayRoutines: userId_day (unique)');
+    
+    await db.collection('dayRoutines').createIndex(
+      { userId: 1 },
+      { name: 'userId' }
+    );
+    console.log('✓ dayRoutines: userId');
+
+    // CUSTOM EXERCISES INDEXES
+    await db.collection('customExercises').createIndex(
+      { name: 1 },
+      { name: 'name', collation: { locale: 'en', strength: 2 } }
+    );
+    console.log('✓ customExercises: name (collation)');
+    
+    await db.collection('customExercises').createIndex(
+      { muscle: 1 },
+      { name: 'muscle' }
+    );
+    console.log('✓ customExercises: muscle');
+    
+    await db.collection('customExercises').createIndex(
+      { name: 'text', muscle: 'text' },
+      { name: 'text_search' }
+    );
+    console.log('✓ customExercises: text_search');
+
+    // PROFILES INDEXES
+    await db.collection('profiles').createIndex(
+      { userId: 1 },
+      { name: 'userId', unique: true }
+    );
+    console.log('✓ profiles: userId (unique)');
+
+    // BODY COMPOSITION HISTORY INDEXES
+    await db.collection('bodyCompositionHistory').createIndex(
+      { userId: 1, recordedAt: -1 },
+      { name: 'userId_recordedAt' }
+    );
+    console.log('✓ bodyCompositionHistory: userId_recordedAt');
+
+    console.log('✅ All indexes created successfully!');
+
+    res.json({
+      success: true,
+      message: 'Database indexes created successfully!',
+      indexes: {
+        workoutSets: 4,
+        dayRoutines: 2,
+        customExercises: 3,
+        profiles: 1,
+        bodyCompositionHistory: 1,
+        total: 11
+      }
+    });
+
+  } catch (error) {
+    console.error('❌ Error creating indexes:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
 // Start server (0.0.0.0 needed for cloud deployment)
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`Server running on http://0.0.0.0:${PORT}`);
